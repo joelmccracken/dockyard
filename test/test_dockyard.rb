@@ -24,7 +24,7 @@ describe "docker" do
       File.write(dockerfile, <<-EOF.indent_heredoc)
           FROM busybox
           RUN echo A TEST STRING > /foobar
-        EOF
+      EOF
 
       image = collection.gen_image
       docker.build_image image, dir
