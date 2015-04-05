@@ -10,9 +10,11 @@ class DockyardTest < IntegrationTest
         RUN echo A TEST STRING > /foobar
       EOF
 
-      image = collection.gen_image
-      docker.build_image image, dir
-      docker.images_names.must_include ""
+      repo = gen_repo_name
+      docker.build_image repo, dir
+      images = docker.images
+
+      assert images.find {|img| img.repository == repo }, "image was not found"
     end
   end
 end
