@@ -7,7 +7,13 @@ module Dockyard
   require 'open3'
   require 'json'
 
-  class DockerGateway
+  class CLI
+    # todo check cli version?
+
+    def initialize opts={}
+      @verbose = opts.fetch :verbose, false
+    end
+
     def init_vars
       docker_running = ->{ /running/.match `boot2docker status 2>&1` }
 
@@ -22,7 +28,6 @@ module Dockyard
             else
               raise "Unable to start boot2docker; Aborting."
             end
-
           end
 
           `boot2docker shellinit 2>&1`
@@ -45,7 +50,17 @@ module Dockyard
     end
 
     def run(cmd, &block)
-      Open3.popen3 env_vars, *cmd, &block
+      if @verbose
+        puts "RUN: #{cmd}"
+      end
+      Open3.popen3 env_vars, *cmd do |i, o, e, t|
+        if block
+          block.call i, o, e, t
+        elsif @verbose
+          puts "OUTPUT: #{o.read}"
+          puts "EXIT: #{t.value}"
+        end
+      end
     end
 
     class GetImages
@@ -54,20 +69,19 @@ module Dockyard
       end
 
       def call
-        image_shas = @cli.run(%W{docker images -a}) do |i, o, e, t|
+        image_shas = @cli.run(%W{docker images -a}) {|i, o, e, t|
           o.read.split "\n"
-        end
-
-        json = @cli.run(%W{docker inspect} + image_shas) do |_in, _out, _err, thread|
-          tmp = _out.read.force_encoding(Encoding::UTF_8)
-          JSON.parse(tmp)
-        end
-
-        json.map { |record|
-          Image.new(record)
+        }[1..-1].map { |line|
+          entries = line.split(/[[:space:]]+/)
+          image_data = {
+            :repository => entries[0],
+            :tag => entries[1],
+            :id => entries[2],
+            :created => entries[3..5],
+            :virtual_size => entries[6..7],
+          };
+          Docker::Image.new(image_data)
         }
-
-        `docker images -a`.split("\n")[1..-1].map {|x| x.split(/[[:space:]]+/) }
       end
     end
   end
@@ -89,13 +103,12 @@ module Dockyard
     def initialize
       @config = Config.new
 
-      @cli = DockerGateway.new
+      @cli = CLI.new
 
       yield @config
     end
 
     def run command, &block
-      puts "DOCKER RUN: #{command}"
       @cli.run command, &block
     end
 
@@ -103,8 +116,8 @@ module Dockyard
       run %W{docker build -t #{name} #{dockerfile}}
     end
 
-    def images_names
-      DockerGateway::GetImages.new(self).call
+    def images
+      CLI::GetImages.new(self).call
     end
 
     def rm_image name
@@ -135,10 +148,15 @@ module Dockyard
     end
 
     class Image
+      attr_reader :repository, :tag, :id, :created, :virtual_size, :details
+
       def initialize(opts={})
-        @repoitory = opts.fetch :repository
+        @repository = opts.fetch :repository
         @tag = opts.fetch :tag
-        @inspect_details = opts.fetch :details
+        @id = opts.fetch :id
+        @created = opts.fetch :created
+        @virtual_size = opts.fetch :virtual_size
+        @details = opts.fetch :details, {}
       end
     end
   end
@@ -153,7 +171,6 @@ module Dockyard
     def around_start
     end
   end
-
 
   class Boot2Docker < Docker::Plugin
   end
